@@ -467,9 +467,13 @@ class WeixinMultiAdapter(BasePlatformAdapter):
         sync_buf = self._load_sync_buf()
         timeout_ms = LONG_POLL_TIMEOUT_MS
         consecutive_failures = 0
+        logger.info("[%s] poll loop started, account=%s", self.name, _safe_id(self._account_id))
         while self._running:
             try:
                 response = await _get_updates(self._poll_session, base_url=self._base_url, token=self._token, sync_buf=sync_buf, timeout_ms=timeout_ms)
+                msgs = response.get("msgs") or []
+                if msgs:
+                    logger.info("[%s] poll returned %d message(s)", self.name, len(msgs))
                 suggested_timeout = response.get("longpolling_timeout_ms")
                 if isinstance(suggested_timeout, int) and suggested_timeout > 0:
                     timeout_ms = suggested_timeout
