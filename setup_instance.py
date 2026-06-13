@@ -26,6 +26,21 @@ def _get_hermes_home() -> str:
     return os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))
 
 
+def _ensure_hermes_path():
+    """Add hermes-agent source to sys.path so gateway modules are importable."""
+    hermes_home = Path(_get_hermes_home())
+    source_dir = hermes_home / "hermes-agent"
+    if source_dir.exists() and str(source_dir) not in sys.path:
+        sys.path.insert(0, str(source_dir))
+    # Also add the venv site-packages so aiohttp/cryptography are findable
+    venv_site = hermes_home / "hermes-agent" / "venv" / "lib"
+    if venv_site.exists():
+        for child in venv_site.iterdir():
+            site_packages = child / "site-packages"
+            if site_packages.exists() and str(site_packages) not in sys.path:
+                sys.path.insert(0, str(site_packages))
+
+
 def _get_config_path() -> Path:
     return Path(_get_hermes_home()) / "config.yaml"
 
@@ -88,6 +103,7 @@ def cmd_add(instance_name: str):
     print("  Use WeChat to scan and confirm the QR code.\n")
 
     # Import and run QR login
+    _ensure_hermes_path()
     try:
         from gateway.platforms.weixin import qr_login, check_weixin_requirements
     except ImportError:
