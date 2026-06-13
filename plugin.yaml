@@ -1,0 +1,23 @@
+name: weixin-multi-ilink
+label: Weixin Multi iLink
+kind: platform
+version: 1.0.0
+description: >
+  Hermes gateway plugin that dynamically registers multiple iLink WeChat bot
+  instances from ~/.hermes/config.yaml. Each `weixin-*` platform entry becomes
+  an independent adapter with isolated polling, context-token persistence, and
+  media upload state.
+author: OpenAI Codex
+optional_env:
+  - name: WEIXIN_<NAME>_TOKEN
+    description: "Per-instance iLink bot token override. Replace <NAME> with the uppercase suffix from weixin-<name>."
+    prompt: "Per-instance token override"
+    password: true
+  - name: WEIXIN_<NAME>_ACCOUNT_ID
+    description: "Per-instance iLink bot account_id override (e.g. abc123@im.bot)."
+    prompt: "Per-instance account_id override"
+    password: false
+  - name: WEIXIN_<NAME>_HOME_CHANNEL
+    description: "Per-instance home channel for cron/notification delivery."
+    prompt: "Per-instance home channel"
+    password: false
