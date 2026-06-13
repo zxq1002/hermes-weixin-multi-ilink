@@ -934,6 +934,24 @@ def _validate_config(cfg: PlatformConfig) -> bool:
 
 def _is_connected(cfg: PlatformConfig) -> bool:
     return bool(cfg.enabled and _validate_config(cfg))
+def _make_instance_setup_fn(instance_name: str):
+    """Return a setup_fn for a specific weixin instance."""
+
+    def _setup_instance():
+        from hermes_cli.setup import (
+            print_header,
+            print_info,
+        )
+
+        print_header(f"Weixin Multi-iLink ({instance_name})")
+        print_info(f"Instance: {instance_name}")
+        print_info("To add a NEW instance, run:")
+        print_info(f"  python ~/.hermes/plugins/weixin-multi-ilink/setup_instance.py add <name>")
+        print()
+        print_info("To reconfigure an existing instance, edit ~/.hermes/config.yaml directly.")
+        print_info("Then run: hermes gateway restart")
+
+    return _setup_instance
 
 
 def _load_plugin_instances() -> Dict[str, Dict[str, Any]]:
@@ -971,6 +989,7 @@ def register(ctx) -> None:
             label=f"Weixin ({instance_suffix})",
             adapter_factory=_factory,
             check_fn=check_weixin_requirements,
+            setup_fn=_make_instance_setup_fn(platform_name),
             validate_config=_validate_config,
             is_connected=_is_connected,
             required_env=[],
