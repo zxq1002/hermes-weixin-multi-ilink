@@ -929,7 +929,7 @@ class WeixinMultiAdapter(BasePlatformAdapter):
 
 def _validate_config(cfg: PlatformConfig) -> bool:
     extra = cfg.extra or {}
-    return bool(extra.get("platform_name") and (cfg.token or extra.get("token")) and extra.get("account_id"))
+    return bool((cfg.token or extra.get("token")) and extra.get("account_id"))
 
 
 def _is_connected(cfg: PlatformConfig) -> bool:
