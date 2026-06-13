@@ -470,7 +470,7 @@ class WeixinMultiAdapter(BasePlatformAdapter):
         logger.info("[%s] poll loop started, account=%s", self.name, _safe_id(self._account_id))
         while self._running:
             try:
-                logger.debug("[%s] poll iteration, sync_buf=%s", self.name, sync_buf[:20] if sync_buf else "(empty)")
+                logger.info("[%s] poll iteration", self.name)
                 response = await _get_updates(self._poll_session, base_url=self._base_url, token=self._token, sync_buf=sync_buf, timeout_ms=timeout_ms)
                 msgs = response.get("msgs") or []
                 if msgs:
