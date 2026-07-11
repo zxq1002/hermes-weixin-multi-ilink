@@ -414,7 +414,10 @@ class WeixinMultiAdapter(BasePlatformAdapter):
     def _save_sync_buf(self, sync_buf: str) -> None:
         atomic_json_write(self._sync_buf_path(), {"get_updates_buf": sync_buf})
 
-    async def connect(self) -> bool:
+    async def connect(self, *, is_reconnect: bool = False) -> bool:
+        # ``is_reconnect`` is part of Hermes' platform adapter contract. The
+        # iLink sync cursor is persisted independently, so no special handling
+        # is needed here.
         if not check_weixin_requirements():
             self._set_fatal_error("weixin_missing_dependency", "Weixin startup failed: aiohttp is required", retryable=False)
             return False
