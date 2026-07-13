@@ -690,6 +690,29 @@ class WeixinMultiAdapter(BasePlatformAdapter):
     def _split_text(self, content: str) -> List[str]:
         return _split_text_for_weixin_delivery(content, self.MAX_MESSAGE_LENGTH, self._split_multiline_messages)
 
+    def _send_session_for_current_loop(self):
+        """Return ``_send_session`` only if it belongs to the running event loop.
+
+        The gateway's main poll loop (loop A) creates ``_send_session`` in
+        ``connect()``.  When cron delivery runs ``send()`` via
+        ``asyncio.run()`` (loop B), the session's internal connector is still
+        bound to loop A, so ``asyncio.wait_for`` inside ``_api_post`` raises
+        ``Future attached to a different loop``.
+
+        This guard lets the caller detect the mismatch and create a temporary
+        session bound to the current loop.  Mirrors the built-in weixin
+        adapter's ``send_weixin_direct`` check (weixin.py:2307-2311).
+        """
+        sess = self._send_session
+        if sess is None or sess.closed:
+            return None
+        try:
+            if sess._loop is not asyncio.get_running_loop():
+                return None
+        except AttributeError:
+            return None
+        return sess
+
     async def _send_text_chunk(self, *, chat_id: str, chunk: str, context_token: Optional[str], client_id: str) -> None:
         async with self._send_text_gate:
             last_error: Optional[Exception] = None
@@ -726,6 +749,32 @@ class WeixinMultiAdapter(BasePlatformAdapter):
 
     async def send(self, chat_id: str, content: str, reply_to: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> SendResult:
         del reply_to, metadata
+        if not self._token:
+            return SendResult(success=False, error="Not connected")
+
+        # Detect event-loop mismatch: the gateway's main loop (loop A) created
+        # _send_session in connect(), but cron standalone delivery runs send()
+        # inside asyncio.run() (loop B).  Using a session bound to a different
+        # loop triggers "Future attached to a different loop" inside _api_post.
+        # When the mismatch is detected (or _send_session is missing), create a
+        # temporary ClientSession bound to the current loop for this send only.
+        # Mirrors the built-in weixin adapter's send_weixin_direct (weixin.py:2307-2336).
+        owns_temp_session = False
+        if self._send_session_for_current_loop() is None:
+            no_timeout = aiohttp.ClientTimeout(total=None, connect=None, sock_connect=None, sock_read=None)
+            self._send_session = aiohttp.ClientSession(
+                trust_env=True, connector=_make_ssl_connector(), timeout=no_timeout
+            )
+            owns_temp_session = True
+
+        try:
+            return await self._send_impl(chat_id, content)
+        finally:
+            if owns_temp_session:
+                await self._send_session.close()
+                self._send_session = None
+
+    async def _send_impl(self, chat_id: str, content: str) -> SendResult:
         if not self._send_session or not self._token:
             return SendResult(success=False, error="Not connected")
         context_token = self._token_store.get(chat_id)
@@ -935,12 +984,49 @@ class WeixinMultiAdapter(BasePlatformAdapter):
 
 
 def _validate_config(cfg: PlatformConfig) -> bool:
+    """Module-level fallback when no env_prefix is available.
+
+    Checks cfg.token / extra.token and extra.account_id only.  Plugin
+    instances registered via :func:`register` use the closure produced by
+    :func:`_make_validators` instead, which also checks
+    ``WEIXIN_<NAME>_TOKEN`` / ``WEIXIN_<NAME>_ACCOUNT_ID`` environment
+    variables -- those are the primary credential source for multi-instance
+    setups where ``config.yaml`` only carries ``enabled: true``.
+    """
     extra = cfg.extra or {}
     return bool((cfg.token or extra.get("token")) and extra.get("account_id"))
 
 
 def _is_connected(cfg: PlatformConfig) -> bool:
     return bool(cfg.enabled and _validate_config(cfg))
+
+
+def _make_validators(env_prefix: str):
+    """Return (validate_config, is_connected) closures that also check env vars.
+
+    ``_validate_config`` runs *before* the adapter is created, so the
+    environment-variable resolution in ``WeixinMultiAdapter._get_config_value``
+    hasn't happened yet.  Without this closure, a multi-instance entry whose
+    credentials live only in ``WEIXIN_<NAME>_TOKEN`` / ``WEIXIN_<NAME>_ACCOUNT_ID``
+    (not in ``config.yaml`` ``extra``) fails validation and the platform is
+    silently dropped at startup.
+    """
+
+    def _validate(cfg: PlatformConfig) -> bool:
+        extra = cfg.extra or {}
+        token = cfg.token or extra.get("token")
+        account_id = extra.get("account_id")
+        # Fall back to per-instance environment variables
+        if not token:
+            token = (os.getenv(f"{env_prefix}_TOKEN") or "").strip()
+        if not account_id:
+            account_id = (os.getenv(f"{env_prefix}_ACCOUNT_ID") or "").strip()
+        return bool(token and account_id)
+
+    def _is_conn(cfg: PlatformConfig) -> bool:
+        return bool(cfg.enabled and _validate(cfg))
+
+    return _validate, _is_conn
 def _make_instance_setup_fn(instance_name: str):
     """Return a setup_fn for a specific weixin instance."""
 
@@ -991,14 +1077,20 @@ def register(ctx) -> None:
             cfg.extra.setdefault("platform_name", platform_name)
             return WeixinMultiAdapter(cfg)
 
+        # Per-instance validators that also check WEIXIN_<NAME>_TOKEN /
+        # WEIXIN_<NAME>_ACCOUNT_ID environment variables.  The module-level
+        # _validate_config only sees config.yaml and would reject instances
+        # whose credentials live in .env.
+        _validate_fn, _is_connected_fn = _make_validators(env_prefix)
+
         ctx.register_platform(
             name=platform_name,
             label=f"Weixin ({instance_suffix})",
             adapter_factory=_factory,
             check_fn=check_weixin_requirements,
             setup_fn=_make_instance_setup_fn(platform_name),
-            validate_config=_validate_config,
-            is_connected=_is_connected,
+            validate_config=_validate_fn,
+            is_connected=_is_connected_fn,
             required_env=[],
             install_hint="pip install aiohttp cryptography certifi",
             allowed_users_env=f"{env_prefix}_ALLOWED_USERS",
