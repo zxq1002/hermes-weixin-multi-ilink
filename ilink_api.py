@@ -98,7 +98,8 @@ def _headers(token: Optional[str], body: str) -> Dict[str, str]:
 def _is_stale_session_ret(ret: Optional[int], errcode: Optional[int], errmsg: Optional[str]) -> bool:
     if ret != RATE_LIMIT_ERRCODE and errcode != RATE_LIMIT_ERRCODE:
         return False
-    return (errmsg or "").lower() == "unknown error"
+    msg = (errmsg or "").lower()
+    return "freq limit" not in msg
 
 
 async def _api_post(

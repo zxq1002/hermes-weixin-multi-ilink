@@ -702,10 +702,11 @@ class WeixinMultiAdapter(BasePlatformAdapter):
                     errcode = resp.get("errcode") if isinstance(resp, dict) else None
                     if (ret is not None and ret not in {0}) or (errcode is not None and errcode not in {0}):
                         is_session_expired = ret == SESSION_EXPIRED_ERRCODE or errcode == SESSION_EXPIRED_ERRCODE or _is_stale_session_ret(ret, errcode, resp.get("errmsg"))
-                        if is_session_expired and not retried_without_token and current_token:
+                        if is_session_expired and not retried_without_token:
                             retried_without_token = True
-                            current_token = None
-                            self._token_store.delete(chat_id)
+                            if current_token:
+                                current_token = None
+                                self._token_store.delete(chat_id)
                             continue
                         if ret == RATE_LIMIT_ERRCODE or errcode == RATE_LIMIT_ERRCODE:
                             last_error = RuntimeError(f"iLink sendmessage rate limited: ret={ret} errcode={errcode} errmsg={resp.get('errmsg')}")
@@ -906,12 +907,58 @@ class WeixinMultiAdapter(BasePlatformAdapter):
             item_kwargs["sample_rate"] = 24000
             item_kwargs["bits_per_sample"] = 16
         media_item = item_builder(**item_kwargs)
+
         last_message_id = None
-        if caption:
-            last_message_id = f"hermes-weixin-{uuid.uuid4().hex}"
-            await _send_message(self._send_session, base_url=self._base_url, token=self._token, to=chat_id, text=self.format_message(caption), context_token=context_token, client_id=last_message_id)
-        last_message_id = f"hermes-weixin-{uuid.uuid4().hex}"
-        await _api_post(self._send_session, base_url=self._base_url, endpoint="ilink/bot/sendmessage", payload={"msg": {"from_user_id": "", "to_user_id": chat_id, "client_id": last_message_id, "message_type": MSG_TYPE_BOT, "message_state": MSG_STATE_FINISH, "item_list": [media_item], **({"context_token": context_token} if context_token else {})}}, token=self._token, timeout_ms=API_TIMEOUT_MS)
+        current_token = context_token
+        retried_without_token = False
+        caption_sent = False
+        # 预先生成 client_id，重试时复用同一个以避免重复消息
+        caption_client_id = f"hermes-weixin-{uuid.uuid4().hex}" if caption else None
+        media_client_id = f"hermes-weixin-{uuid.uuid4().hex}"
+
+        while True:
+            if caption and not caption_sent:
+                resp = await _send_message(self._send_session, base_url=self._base_url, token=self._token, to=chat_id, text=self.format_message(caption), context_token=current_token, client_id=caption_client_id)
+                ret = resp.get("ret") if isinstance(resp, dict) else None
+                errcode = resp.get("errcode") if isinstance(resp, dict) else None
+                if (ret is not None and ret not in {0}) or (errcode is not None and errcode not in {0}):
+                    is_session_expired = ret == SESSION_EXPIRED_ERRCODE or errcode == SESSION_EXPIRED_ERRCODE or _is_stale_session_ret(ret, errcode, resp.get("errmsg"))
+                    if is_session_expired and not retried_without_token:
+                        retried_without_token = True
+                        if current_token:
+                            current_token = None
+                            self._token_store.delete(chat_id)
+                        continue
+                    raise RuntimeError(f"iLink sendmessage error (caption): ret={ret} errcode={errcode} errmsg={resp.get('errmsg')}")
+                last_message_id = caption_client_id
+                caption_sent = True
+
+            payload = {
+                "msg": {
+                    "from_user_id": "",
+                    "to_user_id": chat_id,
+                    "client_id": media_client_id,
+                    "message_type": MSG_TYPE_BOT,
+                    "message_state": MSG_STATE_FINISH,
+                    "item_list": [media_item],
+                    **({
+                        "context_token": current_token} if current_token else {})
+                }
+            }
+            resp = await _api_post(self._send_session, base_url=self._base_url, endpoint="ilink/bot/sendmessage", payload=payload, token=self._token, timeout_ms=API_TIMEOUT_MS)
+            ret = resp.get("ret") if isinstance(resp, dict) else None
+            errcode = resp.get("errcode") if isinstance(resp, dict) else None
+            if (ret is not None and ret not in {0}) or (errcode is not None and errcode not in {0}):
+                is_session_expired = ret == SESSION_EXPIRED_ERRCODE or errcode == SESSION_EXPIRED_ERRCODE or _is_stale_session_ret(ret, errcode, resp.get("errmsg"))
+                if is_session_expired and not retried_without_token:
+                    retried_without_token = True
+                    if current_token:
+                        current_token = None
+                        self._token_store.delete(chat_id)
+                    continue
+                raise RuntimeError(f"iLink sendmessage error (media): ret={ret} errcode={errcode} errmsg={resp.get('errmsg')}")
+            last_message_id = media_client_id
+            break
         return last_message_id
 
     def _outbound_media_builder(self, path: str, force_file_attachment: bool = False):
