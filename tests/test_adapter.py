@@ -271,3 +271,29 @@ async def test_send_file_no_context_token_stale_session_retry():
     finally:
         if temp_file.exists():
             temp_file.unlink()
+
+
+@pytest.mark.asyncio
+async def test_send_text_chunk_session_expired_retry_fails_immediately():
+    """stale session 重试依然失败时，应立即抛出 session expired 异常而不再继续进行 rate limit 重试"""
+    config = PlatformConfig(token="bot_token", extra={"platform_name": "weixin-test", "account_id": "test_account"})
+    instance = WeixinMultiAdapter(config)
+    instance._send_session = MagicMock()
+    instance._token_store = MagicMock()
+    instance._token_store.get.return_value = "stale_token"
+    instance._send_chunk_retries = 4
+
+    mock_send = AsyncMock()
+    mock_send.side_effect = [
+        {"ret": -2, "errmsg": "unknown error"}, # 第一次 stale session
+        {"ret": -2, "errmsg": None},             # 第二次重试依然失败 (stale session)
+    ]
+
+    with patch("mock_plugin.adapter._send_message", mock_send):
+        with pytest.raises(RuntimeError) as exc_info:
+            await instance._send_text_chunk(chat_id="user123", chunk="hello", context_token="stale_token", client_id="msg123")
+        
+        assert "session expired" in str(exc_info.value)
+        # 应只调用 2 次，而不是因为 -2 被当做 rate limit 重试 5 次
+        assert mock_send.call_count == 2
+

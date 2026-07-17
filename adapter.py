@@ -725,12 +725,15 @@ class WeixinMultiAdapter(BasePlatformAdapter):
                     errcode = resp.get("errcode") if isinstance(resp, dict) else None
                     if (ret is not None and ret not in {0}) or (errcode is not None and errcode not in {0}):
                         is_session_expired = ret == SESSION_EXPIRED_ERRCODE or errcode == SESSION_EXPIRED_ERRCODE or _is_stale_session_ret(ret, errcode, resp.get("errmsg"))
-                        if is_session_expired and not retried_without_token:
-                            retried_without_token = True
-                            if current_token:
-                                current_token = None
-                                self._token_store.delete(chat_id)
-                            continue
+                        if is_session_expired:
+                            if not retried_without_token:
+                                retried_without_token = True
+                                if current_token:
+                                    current_token = None
+                                    self._token_store.delete(chat_id)
+                                continue
+                            last_error = RuntimeError(f"iLink sendmessage session expired: ret={ret} errcode={errcode} errmsg={resp.get('errmsg')}")
+                            break
                         if ret == RATE_LIMIT_ERRCODE or errcode == RATE_LIMIT_ERRCODE:
                             last_error = RuntimeError(f"iLink sendmessage rate limited: ret={ret} errcode={errcode} errmsg={resp.get('errmsg')}")
                             if attempt >= self._send_chunk_retries:
@@ -972,12 +975,14 @@ class WeixinMultiAdapter(BasePlatformAdapter):
                 errcode = resp.get("errcode") if isinstance(resp, dict) else None
                 if (ret is not None and ret not in {0}) or (errcode is not None and errcode not in {0}):
                     is_session_expired = ret == SESSION_EXPIRED_ERRCODE or errcode == SESSION_EXPIRED_ERRCODE or _is_stale_session_ret(ret, errcode, resp.get("errmsg"))
-                    if is_session_expired and not retried_without_token:
-                        retried_without_token = True
-                        if current_token:
-                            current_token = None
-                            self._token_store.delete(chat_id)
-                        continue
+                    if is_session_expired:
+                        if not retried_without_token:
+                            retried_without_token = True
+                            if current_token:
+                                current_token = None
+                                self._token_store.delete(chat_id)
+                            continue
+                        raise RuntimeError(f"iLink sendmessage session expired (caption): ret={ret} errcode={errcode} errmsg={resp.get('errmsg')}")
                     raise RuntimeError(f"iLink sendmessage error (caption): ret={ret} errcode={errcode} errmsg={resp.get('errmsg')}")
                 last_message_id = caption_client_id
                 caption_sent = True
@@ -999,12 +1004,14 @@ class WeixinMultiAdapter(BasePlatformAdapter):
             errcode = resp.get("errcode") if isinstance(resp, dict) else None
             if (ret is not None and ret not in {0}) or (errcode is not None and errcode not in {0}):
                 is_session_expired = ret == SESSION_EXPIRED_ERRCODE or errcode == SESSION_EXPIRED_ERRCODE or _is_stale_session_ret(ret, errcode, resp.get("errmsg"))
-                if is_session_expired and not retried_without_token:
-                    retried_without_token = True
-                    if current_token:
-                        current_token = None
-                        self._token_store.delete(chat_id)
-                    continue
+                if is_session_expired:
+                    if not retried_without_token:
+                        retried_without_token = True
+                        if current_token:
+                            current_token = None
+                            self._token_store.delete(chat_id)
+                        continue
+                    raise RuntimeError(f"iLink sendmessage session expired (media): ret={ret} errcode={errcode} errmsg={resp.get('errmsg')}")
                 raise RuntimeError(f"iLink sendmessage error (media): ret={ret} errcode={errcode} errmsg={resp.get('errmsg')}")
             last_message_id = media_client_id
             break
